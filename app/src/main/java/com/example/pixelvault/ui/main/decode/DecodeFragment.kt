@@ -26,12 +26,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.io.UnsupportedEncodingException // Added for InternetAddress personal name
 import java.util.*
 import javax.mail.* 
 import javax.mail.internet.InternetAddress
 import javax.mail.internet.MimeMessage
 
-private const val SENDER_EMAIL = "abcd20050625@gmail.com" // Updated Sender Email
+private const val SENDER_EMAIL = "abcd20050625@gmail.com" 
 private const val SENDER_APP_PASSWORD = "jvgq edmk zrel wmmf"
 private const val SMTP_TAG = "EmailSender"
 private const val LOCATION_PERMISSION_REQUEST_CODE = 1001
@@ -39,7 +40,7 @@ private const val LOCATION_PERMISSION_REQUEST_CODE = 1001
 fun sendEmailSmtp(senderEmail: String, senderAppPassword: String, toEmail: String, subject: String, body: String) {
     CoroutineScope(Dispatchers.IO).launch {
         try {
-            Log.d(SMTP_TAG, "Attempting to send email to: $toEmail from: $senderEmail")
+            Log.d(SMTP_TAG, "Attempting to send email to: $toEmail from: $senderEmail as PixelVault")
             val props = Properties().apply {
                 put("mail.smtp.auth", "true")
                 put("mail.smtp.starttls.enable", "true")
@@ -52,7 +53,12 @@ fun sendEmailSmtp(senderEmail: String, senderAppPassword: String, toEmail: Strin
                 }
             })
             val msg = MimeMessage(session).apply {
-                setFrom(InternetAddress(senderEmail))
+                try {
+                    setFrom(InternetAddress(senderEmail, "PixelVault")) // Set personal name
+                } catch (e: UnsupportedEncodingException) {
+                    Log.e(SMTP_TAG, "Failed to set sender with personal name: ${e.message}")
+                    setFrom(InternetAddress(senderEmail)) // Fallback to email only
+                }
                 addRecipient(Message.RecipientType.TO, InternetAddress(toEmail))
                 setSubject(subject)
                 setText(body)
