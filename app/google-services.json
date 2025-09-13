@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "727586900387",
+    "project_id": "pixelvault-19c2f",
+    "storage_bucket": "pixelvault-19c2f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:727586900387:android:a40c36c0d060fdfb16b216",
+        "android_client_info": {
+          "package_name": "com.example.pixelvault"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "727586900387-1hott45lfdh5a2o0aqhtiel8h0uot26n.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.pixelvault",
+            "certificate_hash": "142cc214b29674031b5ce54ecb689b5fcf4b0887"
+          }
+        },
+        {
+          "client_id": "727586900387-ghb5h9nq7g3tbj376djdl4958og3arng.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1ORrwRvAARdouxNzIZ37hu_Ss5ZnnEfI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "727586900387-ghb5h9nq7g3tbj376djdl4958og3arng.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

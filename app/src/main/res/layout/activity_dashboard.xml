@@ -1,0 +1,13 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical" android:gravity="center_horizontal" 
+    android:layout_width="match_parent" android:layout_height="match_parent">
+
+    <TextView android:text="PixelVault" android:textSize="24sp"
+        android:layout_marginTop="16dp" android:layout_marginBottom="16dp"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+
+    <!-- Removed redundant btnEncode and btnDecode buttons -->
+
+    <FrameLayout android:id="@+id/container"
+        android:layout_width="match_parent" android:layout_height="match_parent"/>
+</LinearLayout>
