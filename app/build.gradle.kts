@@ -68,4 +68,7 @@ dependencies {
     implementation("com.sun.mail:android-activation:1.6.7")
     implementation("androidx.security:security-crypto:1.1.0")
     implementation("com.google.android.gms:play-services-location:21.0.1")
+
+    // Added CircleImageView dependency
+    implementation("de.hdodenhof:circleimageview:3.1.0")
 }

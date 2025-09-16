@@ -7,7 +7,6 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.spec.KeySpec
-// Removed java.util.* to avoid conflict if not explicitly used by non-AES part
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.IvParameterSpec
@@ -18,7 +17,8 @@ enum class DecodeStatus {
     SUCCESS,
     KEY_MISMATCH,
     DECODING_ERROR,
-    MALFORMED_DATA
+    MALFORMED_DATA,
+    INVALID_SIGNATURE // Added for PixelVault image check
 }
 
 data class DecodeResult(
@@ -32,17 +32,19 @@ object Steganography {
     private const val LENGTH_BITS = 32
     private const val TAG = "Steganography_Util"
     private const val DELIMITER = ":"
+    private const val PIXELVAULT_SIGNATURE = "PXVTENC::" // PixelVault specific signature
 
-    // Encode method for encoderEmail:key:message format (Non-AES for this path)
+    // Encode method for encoderEmail:key:message format
     fun encode(image: Bitmap, encoderEmail: String, key: String, message: String): Bitmap? {
         Log.d(TAG, "Encode (Email/Key/Msg): Image dimensions: ${image.width}x${image.height}")
-        if (encoderEmail.contains(DELIMITER) || key.contains(DELIMITER)) {
-            Log.e(TAG, "Encode Error: Encoder email or key cannot contain the delimiter '$DELIMITER'")
+        if (encoderEmail.contains(DELIMITER) || key.contains(DELIMITER) || message.contains(PIXELVAULT_SIGNATURE)) {
+            Log.e(TAG, "Encode Error: Encoder email, key, or message cannot contain the delimiter '$DELIMITER' or the signature '$PIXELVAULT_SIGNATURE'")
             return null
         }
 
         val encodedImage = image.copy(Bitmap.Config.ARGB_8888, true)
-        val dataToEmbedString = "$encoderEmail$DELIMITER$key$DELIMITER$message"
+        // Prepend the signature to the data
+        val dataToEmbedString = "$PIXELVAULT_SIGNATURE$encoderEmail$DELIMITER$key$DELIMITER$message"
         val dataToEmbed = dataToEmbedString.toByteArray(StandardCharsets.UTF_8)
         val actualDataLengthInBits = dataToEmbed.size * 8
 
@@ -54,7 +56,7 @@ object Steganography {
             return null
         }
 
-        Log.d(TAG, "Encoding: Data to embed: '${dataToEmbedString.take(70)}...'")
+        Log.d(TAG, "Encoding: Data to embed (with signature): '${dataToEmbedString.take(70)}...'")
         Log.d(TAG, "Encoding: Actual data length in bits: $actualDataLengthInBits")
 
         var bitIndex = 0
@@ -96,7 +98,7 @@ object Steganography {
         return encodedImage
     }
 
-    // Decode method for encoderEmail:key:message format (Non-AES for this path)
+    // Decode method for encoderEmail:key:message format
     fun decode(image: Bitmap, inputKey: String): DecodeResult {
         Log.d(TAG, "Decode (Email/Key/Msg): Image dimensions: ${image.width}x${image.height}")
         Log.d(TAG, "Decoding attempt with inputKey: '$inputKey'")
@@ -120,7 +122,8 @@ object Steganography {
 
         if (actualDataLengthInBits <= 0 || actualDataLengthInBits > (image.width * image.height - LENGTH_BITS)) {
             Log.e(TAG, "Decode Error: Invalid decoded data length: $actualDataLengthInBits.")
-            return DecodeResult(DecodeStatus.DECODING_ERROR)
+            // This could also indicate it's not our encoded image or heavily corrupted
+            return DecodeResult(DecodeStatus.DECODING_ERROR) 
         }
         if (actualDataLengthInBits % 8 != 0) {
              Log.w(TAG, "Decode Warning: Data length $actualDataLengthInBits not multiple of 8.")
@@ -163,10 +166,19 @@ object Steganography {
         val fullDecodedString = String(dataBytes, StandardCharsets.UTF_8)
         Log.d(TAG, "Decoding: Full decoded string (first 70 chars): '${fullDecodedString.take(70)}...'")
 
-        val parts = fullDecodedString.split(DELIMITER, limit = 3)
+        // Check for PixelVault signature
+        if (!fullDecodedString.startsWith(PIXELVAULT_SIGNATURE)) {
+            Log.w(TAG, "Decoding: Missing or incorrect PixelVault signature.")
+            return DecodeResult(DecodeStatus.INVALID_SIGNATURE) // Image not encoded by this app or signature corrupted
+        }
+
+        // Remove signature before splitting
+        val actualContentString = fullDecodedString.substring(PIXELVAULT_SIGNATURE.length)
+
+        val parts = actualContentString.split(DELIMITER, limit = 3)
         if (parts.size < 3) {
-            Log.e(TAG, "Decode Error: Malformed data. Expected 3 parts (email:key:message), got ${parts.size}")
-            // If data is malformed, we can't reliably get an encoder email.
+            Log.e(TAG, "Decode Error: Malformed data after signature. Expected 3 parts (email:key:message), got ${parts.size}")
+            // If data is malformed after signature, we can't reliably get an encoder email.
             return DecodeResult(DecodeStatus.MALFORMED_DATA)
         }
 

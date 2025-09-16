@@ -1,19 +1,23 @@
 package com.example.pixelvault.ui.main.decode
 
 import android.Manifest
-import android.app.Activity
-import android.content.Intent
+import android.content.Context // Added for ContentResolver
+import android.content.Intent // Keep for sharing/other intents if any, not for image picking directly
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder // Added
 import android.location.Location
 import android.net.Uri
+import android.os.Build // Added
 import android.os.Bundle
-import android.provider.MediaStore
+import android.provider.MediaStore // Keep for MediaStore constants if used elsewhere, but not getBitmap
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.example.pixelvault.databinding.FragmentDecodeBinding
@@ -38,10 +42,7 @@ private const val SENDER_EMAIL = "abcd20050625@gmail.com"
 private const val SENDER_APP_PASSWORD = "jvgq edmk zrel wmmf"
 private const val SMTP_TAG = "EmailSender"
 
-private const val PICK_IMAGE_REQUEST = 101
-private const val ALL_PERMISSIONS_REQUEST_CODE = 1003
-
-// Top-level function for sending email
+// Top-level function for sending email (remains unchanged)
 fun sendEmailSmtp(
     senderEmail: String,
     senderAppPassword: String,
@@ -109,7 +110,6 @@ fun sendEmailSmtp(
             Log.e(SMTP_TAG, "Email sending failed (General Exception): ${e.message}", e)
             e.printStackTrace()
         } finally {
-            // Clean up the temporary photo file after attempting to send the email
             if (photoPath != null) {
                 try {
                     val fileToDelete = File(photoPath)
@@ -135,6 +135,53 @@ class DecodeFragment : Fragment() {
     private var selectedImage: Bitmap? = null
     private var latestEncoderEmailForAlert: String? = null
 
+    private lateinit var pickImageLauncher: ActivityResultLauncher<String>
+    private lateinit var requestPermissionsLauncher: ActivityResultLauncher<Array<String>>
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+            uri?.let {
+                try {
+                    selectedImage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        val source = ImageDecoder.createSource(requireContext().contentResolver, it)
+                        ImageDecoder.decodeBitmap(source).copy(Bitmap.Config.ARGB_8888, true)
+                    } else {
+                        @Suppress("DEPRECATION") // Suppress for older SDKs if minSdk < 28
+                        MediaStore.Images.Media.getBitmap(requireContext().contentResolver, it).copy(Bitmap.Config.ARGB_8888, true)
+                    }
+                    Toast.makeText(requireContext(), "Image selected. Ready to decode.", Toast.LENGTH_SHORT).show()
+                    binding.cardDecodedMessageDisplay.visibility = View.GONE // Hide on new image selection
+                } catch (e: IOException) {
+                    Log.e(TAG, "Failed to load image: ${e.message}", e)
+                    Toast.makeText(requireContext(), "Failed to load image", Toast.LENGTH_SHORT).show()
+                } catch (e: SecurityException) {
+                     Log.e(TAG, "Security exception loading image: ${e.message}", e)
+                    Toast.makeText(requireContext(), "Failed to load image due to security restrictions.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+        requestPermissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+            val fineLocationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+            val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
+
+            if (latestEncoderEmailForAlert != null) {
+                if (fineLocationGranted || cameraGranted) { // Proceed if at least one critical permission is granted
+                    proceedWithAlert(latestEncoderEmailForAlert!!)
+                } else {
+                    Toast.makeText(requireContext(), "Permissions denied. Cannot send full alert.", Toast.LENGTH_LONG).show()
+                    sendAlertData(latestEncoderEmailForAlert!!, null, null)
+                }
+            } else {
+                Log.e(TAG, "Encoder email was null after permission result.")
+                Toast.makeText(requireContext(), "Error: Encoder email not found after permission result.", Toast.LENGTH_SHORT).show()
+            }
+            latestEncoderEmailForAlert = null // Reset
+        }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View {
@@ -145,13 +192,14 @@ class DecodeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        binding.btnUpload.setOnClickListener {
-            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            startActivityForResult(intent, PICK_IMAGE_REQUEST)
+        binding.cardDecodedMessageDisplay.visibility = View.GONE // Ensure it's hidden initially
+
+        binding.imageUploadArea.setOnClickListener {
+            pickImageLauncher.launch("image/png") // Specific for PNGs, good with current steganography
         }
 
-        binding.btnDecode.setOnClickListener {
-            val key = binding.etKey.text.toString()
+        binding.btnDecodeImage.setOnClickListener { 
+            val key = binding.etPassword.text.toString()
             if (selectedImage == null) {
                 Toast.makeText(requireContext(), "Please upload an encoded image first.", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -160,23 +208,27 @@ class DecodeFragment : Fragment() {
                 Toast.makeText(requireContext(), "Please enter the decryption key.", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-
+            // Hide previous result before attempting new decode
+            binding.cardDecodedMessageDisplay.visibility = View.GONE 
             val decodeResult: DecodeResult = Steganography.decode(selectedImage!!, key)
             handleDecodeResult(decodeResult)
+        }
+
+        binding.btnBackToDashboard.setOnClickListener {
+            parentFragmentManager.popBackStack()
         }
     }
 
     private fun handleDecodeResult(result: DecodeResult) {
         when (result.status) {
             DecodeStatus.SUCCESS -> {
-                binding.tvMessage.text = "Hidden Message:\n${result.message}"
-                binding.tvMessage.visibility = View.VISIBLE
+                binding.tvDecodedMessageResult.text = result.message
+                binding.cardDecodedMessageDisplay.visibility = View.VISIBLE
+                Toast.makeText(requireContext(), "Message decoded successfully!", Toast.LENGTH_LONG).show() // Adjusted toast message
             }
             DecodeStatus.KEY_MISMATCH -> {
-                binding.tvMessage.text = ""
-                binding.tvMessage.visibility = View.GONE
+                binding.cardDecodedMessageDisplay.visibility = View.GONE
                 Toast.makeText(requireContext(), "Wrong Key! Attempting to alert encoder.", Toast.LENGTH_LONG).show()
-
                 if (!result.encoderEmail.isNullOrEmpty()) {
                     latestEncoderEmailForAlert = result.encoderEmail
                     checkAndRequestPermissions()
@@ -185,14 +237,16 @@ class DecodeFragment : Fragment() {
                 }
             }
             DecodeStatus.MALFORMED_DATA -> {
-                binding.tvMessage.text = ""
-                binding.tvMessage.visibility = View.GONE
+                binding.cardDecodedMessageDisplay.visibility = View.GONE
                 Toast.makeText(requireContext(), "Error: Image data is malformed.", Toast.LENGTH_LONG).show()
             }
             DecodeStatus.DECODING_ERROR -> {
-                binding.tvMessage.text = ""
-                binding.tvMessage.visibility = View.GONE
+                binding.cardDecodedMessageDisplay.visibility = View.GONE
                 Toast.makeText(requireContext(), "Decoding Error! Image might not be encoded or is corrupted.", Toast.LENGTH_LONG).show()
+            }
+            DecodeStatus.INVALID_SIGNATURE -> {
+                binding.cardDecodedMessageDisplay.visibility = View.GONE
+                Toast.makeText(requireContext(), "This image does not appear to be encoded by PixelVault or is corrupted.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -207,8 +261,9 @@ class DecodeFragment : Fragment() {
         }
 
         if (requiredPermissions.isNotEmpty()) {
-            requestPermissions(requiredPermissions.toTypedArray(), ALL_PERMISSIONS_REQUEST_CODE)
+            requestPermissionsLauncher.launch(requiredPermissions.toTypedArray())
         } else {
+            // All permissions already granted
             latestEncoderEmailForAlert?.let { proceedWithAlert(it) }
         }
     }
@@ -219,7 +274,7 @@ class DecodeFragment : Fragment() {
 
         if (cameraPermissionGranted) {
             Toast.makeText(requireContext(), "Attempting to capture photo...", Toast.LENGTH_SHORT).show()
-            PhotoCaptureHelper.capturePhoto(requireContext()) { photoFileCaptured -> 
+            PhotoCaptureHelper.capturePhoto(requireContext()) { photoFileCaptured ->
                 getLocationAndSendEmail(encoderEmail, photoFileCaptured, locationPermissionGranted)
             }
         } else {
@@ -231,24 +286,23 @@ class DecodeFragment : Fragment() {
     private fun getLocationAndSendEmail(encoderEmail: String, photoFile: File?, locationPermissionGranted: Boolean) {
         if (locationPermissionGranted) {
             LocationHelper.getCurrentLocation(requireContext()) { location ->
-                sendAlertData(encoderEmail, photoFile, location) 
+                sendAlertData(encoderEmail, photoFile, location)
             }
         } else {
             Log.d(TAG, "Location permission not granted. Proceeding without location.")
-            sendAlertData(encoderEmail, photoFile, null) 
+            sendAlertData(encoderEmail, photoFile, null)
         }
     }
 
     private fun sendAlertData(encoderEmail: String, photoFile: File?, location: Location?) {
-        val currentUserEmail = FirebaseAuth.getInstance().currentUser?.email ?: "Unknown Decoder"
+        val actualUserIdentifier = FirebaseAuth.getInstance().currentUser?.email ?: "Unknown Decoder"
         val subject = "PixelVault: Incorrect Key Attempt"
         var body = "Hello,\n\nAn attempt was made to decode your image with an incorrect key."
-            .plus("\n\nAttempt made by: $currentUserEmail")
+            .plus("\n\nAttempt made by: $actualUserIdentifier")
             .plus(location?.let { "\nLocation: https://www.google.com/maps?q=${it.latitude},${it.longitude}" } ?: "\nLocation: Not available")
             .plus("\nTime: ${Date()}")
 
         val photoPathForEmail = photoFile?.absolutePath
-
         if (photoPathForEmail != null) {
             body += "\n\nAn image of the user attempting to decode may have been captured (see attachment)."
         } else {
@@ -258,52 +312,13 @@ class DecodeFragment : Fragment() {
         sendEmailSmtp(SENDER_EMAIL, SENDER_APP_PASSWORD, encoderEmail, subject, body, photoPathForEmail)
         Log.d(SMTP_TAG, "Alert email process initiated to $encoderEmail. Photo path: $photoPathForEmail, Location: $location")
         Toast.makeText(requireContext(), "Alert email process initiated to encoder.", Toast.LENGTH_LONG).show()
-        // photoFile?.delete() // Removed from here
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == PICK_IMAGE_REQUEST && resultCode == Activity.RESULT_OK && data != null) {
-            data.data?.let { uri: Uri ->
-                try {
-                    selectedImage = MediaStore.Images.Media.getBitmap(requireContext().contentResolver, uri)
-                    binding.ivPreview.setImageBitmap(selectedImage)
-                    binding.tvMessage.text = ""
-                    binding.tvMessage.visibility = View.GONE
-                } catch (e: IOException) {
-                    Log.e(TAG, "Failed to load image", e)
-                    Toast.makeText(requireContext(), "Failed to load image", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == ALL_PERMISSIONS_REQUEST_CODE) {
-            val permissionsMap = permissions.zip(grantResults.toTypedArray()).toMap()
-            val locationGranted = permissionsMap[Manifest.permission.ACCESS_FINE_LOCATION] == PackageManager.PERMISSION_GRANTED
-            val cameraGranted = permissionsMap[Manifest.permission.CAMERA] == PackageManager.PERMISSION_GRANTED
-
-            if (latestEncoderEmailForAlert != null) {
-                 if (locationGranted || cameraGranted) { 
-                    proceedWithAlert(latestEncoderEmailForAlert!!)
-                 } else {
-                    Toast.makeText(requireContext(), "Permissions denied. Cannot send full alert.", Toast.LENGTH_LONG).show()
-                    sendAlertData(latestEncoderEmailForAlert!!, null, null) 
-                 }
-            } else {
-                Log.e(TAG, "Encoder email was null after permission result.")
-                Toast.makeText(requireContext(), "Error: Encoder email not found after permission result.", Toast.LENGTH_SHORT).show()
-            }
-            latestEncoderEmailForAlert = null 
-        }
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
     }
+
     companion object {
         private const val TAG = "DecodeFragment"
     }

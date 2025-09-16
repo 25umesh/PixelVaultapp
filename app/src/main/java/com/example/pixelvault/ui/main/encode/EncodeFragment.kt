@@ -19,37 +19,46 @@ import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import com.example.pixelvault.databinding.FragmentEncodeBinding
 import com.example.pixelvault.util.Steganography
-import com.google.firebase.auth.FirebaseAuth // Added Firebase Auth import
+import com.google.firebase.auth.FirebaseAuth
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 
 class EncodeFragment : Fragment() {
 
-    private lateinit var binding: FragmentEncodeBinding
+    private var _binding: FragmentEncodeBinding? = null
+    private val binding get() = _binding!!
+
     private var selectedImage: Bitmap? = null
+    private var encodedImageFile: File? = null // For storing the path to the encoded image for sharing
     private val PICK_IMAGE = 100
-    private lateinit var auth: FirebaseAuth // Added Firebase Auth instance
+    private lateinit var auth: FirebaseAuth
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View {
-        binding = FragmentEncodeBinding.inflate(inflater, container, false)
-        auth = FirebaseAuth.getInstance() // Initialize Firebase Auth
+        _binding = FragmentEncodeBinding.inflate(inflater, container, false)
+        auth = FirebaseAuth.getInstance()
+        return binding.root
+    }
 
-        binding.btnDownload.visibility = View.GONE
-        binding.btnShare.visibility = View.GONE
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
 
-        // Upload image
-        binding.btnUpload.setOnClickListener {
+        showInputForm() // Set initial UI state
+
+        binding.btnBackToDashboard.setOnClickListener {
+            parentFragmentManager.popBackStack()
+        }
+
+        binding.cvUploadArea.setOnClickListener {
             val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
             startActivityForResult(intent, PICK_IMAGE)
         }
 
-        // Encode message
-        binding.btnEncode.setOnClickListener {
-            val messageString = binding.etMessage.text.toString() // Renamed to avoid conflict with parameter name
-            val key = binding.etKey.text.toString()
+        binding.btnEncodeImage.setOnClickListener {
+            val messageString = binding.etSecretMessage.text.toString()
+            val key = binding.etPassword.text.toString()
             val currentUser = auth.currentUser
 
             if (currentUser == null) {
@@ -57,11 +66,11 @@ class EncodeFragment : Fragment() {
                 return@setOnClickListener
             }
             val encoderEmail = currentUser.email
+
             if (encoderEmail.isNullOrEmpty()){
                 Toast.makeText(requireContext(), "User email not found. Cannot encode.", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-
             if (selectedImage == null) {
                 Toast.makeText(requireContext(), "Please upload an image first.", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -70,62 +79,79 @@ class EncodeFragment : Fragment() {
                 Toast.makeText(requireContext(), "Enter both message and key.", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-             // Check for delimiter in email or key as per Steganography.kt logic
             if (encoderEmail.contains(":") || key.contains(":")) {
                 Toast.makeText(requireContext(), "Email or Key cannot contain the character ':'", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
 
-            // Corrected call to Steganography.encode with encoderEmail
             val encodedBitmap = Steganography.encode(selectedImage!!, encoderEmail, key, messageString)
             
             if (encodedBitmap != null) {
-                val file = File(requireContext().cacheDir, "encoded.png")
                 try {
-                    FileOutputStream(file).use { out ->
+                    // Save bitmap to a temporary file for sharing and preview
+                    val tempFile = File(requireContext().cacheDir, "encoded_image.png")
+                    FileOutputStream(tempFile).use { out ->
                         encodedBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                     }
-                    // Changed Toast message to reflect non-AES for this path
-                    Toast.makeText(requireContext(), "Image Encoded Successfully!", Toast.LENGTH_SHORT).show()
-                    binding.btnDownload.visibility = View.VISIBLE
-                    binding.btnShare.visibility = View.VISIBLE
-
-                    binding.btnDownload.setOnClickListener {
-                        if (savePngToGallery(requireContext(), encodedBitmap, "PixelVault_${System.currentTimeMillis()}.png")) {
-                            Toast.makeText(requireContext(), "Saved to Gallery", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(requireContext(), "Save failed", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-
-                    binding.btnShare.setOnClickListener {
-                        try {
-                            val context = requireContext()
-                            val authority = "${context.packageName}.fileprovider"
-                            val uri: Uri = FileProvider.getUriForFile(context, authority, file)
-
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "image/png"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            startActivity(Intent.createChooser(shareIntent, "Share Encoded Image"))
-                        } catch (e: Exception) {
-                            val errorMessage = e.message ?: "Unknown error"
-                            Toast.makeText(requireContext(), "Share failed: $errorMessage", Toast.LENGTH_LONG).show()
-                            e.printStackTrace()
-                        }
-                    }
-
+                    encodedImageFile = tempFile // Store file for share button
+                    showSuccessScreen(encodedBitmap, encodedImageFile!!)
                 } catch (e: IOException) {
                     e.printStackTrace()
-                    Toast.makeText(requireContext(), "Error saving encoded image.", Toast.LENGTH_SHORT).show()
+                    Log.e("EncodeFragment", "Error saving temp encoded image: ${e.message}")
+                    Toast.makeText(requireContext(), "Error processing encoded image for display.", Toast.LENGTH_LONG).show()
+                    // Still show success but maybe without preview or with share disabled if file ops failed critically
+                    // For now, if temp file save fails, share might not work.
+                    showSuccessScreen(encodedBitmap, File("")) // Pass a dummy file if save failed before assignment
+
                 }
             } else {
                 Toast.makeText(requireContext(), "Encoding failed. Message too large, or email/key invalid.", Toast.LENGTH_LONG).show()
             }
         }
-        return binding.root
+    }
+
+    private fun showInputForm() {
+        binding.groupEncodeInputForm.visibility = View.VISIBLE
+        binding.layoutEncodeSuccess.visibility = View.GONE
+        // Reset selected image if needed, or clear preview from success screen
+        // binding.ivUploadIcon.setImageDrawable(ContextCompat.getDrawable(requireContext(), R.drawable.ic_menu_upload)) // Or your default upload icon
+        // binding.tvUploadHint.setText(R.string.click_to_upload) 
+    }
+
+    private fun showSuccessScreen(bitmap: Bitmap, imageFile: File) {
+        binding.groupEncodeInputForm.visibility = View.GONE
+        binding.layoutEncodeSuccess.visibility = View.VISIBLE
+        binding.ivEncodedImagePreview.setImageBitmap(bitmap)
+
+        binding.btnDownloadEncoded.setOnClickListener {
+            if (savePngToGallery(requireContext(), bitmap, "PixelVault_Encoded_${System.currentTimeMillis()}.png")) {
+                Toast.makeText(requireContext(), "Encoded image saved to Gallery", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(requireContext(), "Failed to save image to Gallery", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        binding.btnShareEncoded.setOnClickListener {
+            if (imageFile.exists()) {
+                try {
+                    val context = requireContext()
+                    val authority = "${context.packageName}.fileprovider"
+                    val uri: Uri = FileProvider.getUriForFile(context, authority, imageFile)
+
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "image/png"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(shareIntent, "Share Encoded Image"))
+                } catch (e: Exception) {
+                    Log.e("EncodeFragment", "Error sharing image: ${e.message}", e)
+                    Toast.makeText(requireContext(), "Share failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Toast.makeText(requireContext(), "Encoded image file not found. Cannot share.", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun savePngToGallery(context: Context, bitmap: Bitmap, displayName: String): Boolean {
@@ -134,7 +160,7 @@ class EncodeFragment : Fragment() {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/PixelVault")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + File.separator + "PixelVault")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }
@@ -153,8 +179,8 @@ class EncodeFragment : Fragment() {
             }
             true
         } catch (e: Exception) {
-            e.printStackTrace()
-            imageUri?.let { resolver.delete(it, null, null) }
+            Log.e("EncodeFragment", "savePngToGallery failed: ${e.message}", e)
+            imageUri?.let { resolver.delete(it, null, null) } 
             false
         }
     }
@@ -165,14 +191,28 @@ class EncodeFragment : Fragment() {
             data.data?.let { uri ->
                 try {
                     selectedImage = MediaStore.Images.Media.getBitmap(requireContext().contentResolver, uri)
-                    binding.ivPreview.setImageBitmap(selectedImage)
-                    binding.btnDownload.visibility = View.GONE
-                    binding.btnShare.visibility = View.GONE
+                    showInputForm() // Reset to input form when a new image is selected
+                    // Update the upload area to show the selected image or a thumbnail
+                    // For example, you could change the icon in cvUploadArea or show a small thumbnail.
+                    // binding.ivUploadIcon.setImageBitmap(selectedImage) // Example if you have such an ID in cvUploadArea
+                    Toast.makeText(requireContext(), "Image selected. Ready to encode.", Toast.LENGTH_SHORT).show()
                 } catch (e: IOException) {
                     e.printStackTrace()
                     Toast.makeText(requireContext(), "Failed to load image", Toast.LENGTH_SHORT).show()
                 }
             }
         }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+        // Clean up the temporary encoded image file if it exists
+        encodedImageFile?.let {
+            if (it.exists()) {
+                it.delete()
+            }
+        }
+        encodedImageFile = null
     }
 }

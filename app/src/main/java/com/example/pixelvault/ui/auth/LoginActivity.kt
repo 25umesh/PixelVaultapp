@@ -22,8 +22,10 @@ class LoginActivity : AppCompatActivity() {
 
         auth = FirebaseAuth.getInstance()
 
-        binding.btnLogin.setOnClickListener {
-            val email = binding.etEmail.text.toString()
+        binding.btnSignIn.setOnClickListener { // Changed from btnLogin
+            // The layout uses etUsername, but Firebase auth needs email.
+            // Assuming user enters email in the etUsername field.
+            val email = binding.etUsername.text.toString().trim() // Changed from etEmail
             val pass = binding.etPassword.text.toString()
 
             if (email.isNotEmpty() && pass.isNotEmpty()) {
@@ -32,16 +34,35 @@ class LoginActivity : AppCompatActivity() {
                         startActivity(Intent(this, DashboardActivity::class.java))
                         finish()
                     } else {
-                        Toast.makeText(this, it.exception?.message, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, it.exception?.message ?: "Login failed", Toast.LENGTH_SHORT).show()
                     }
                 }
             } else {
-                Toast.makeText(this, "Please enter email and password", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Please enter username/email and password", Toast.LENGTH_SHORT).show()
             }
         }
 
-        binding.tvRegister.setOnClickListener {
+        binding.tvRegisterLink.setOnClickListener { // Changed from tvRegister
             startActivity(Intent(this, RegisterActivity::class.java))
+        }
+
+        // Listener for the new Forgot Password text view
+        binding.tvForgotPassword.setOnClickListener { // Changed from btnForgotPassword
+            // The layout uses etUsername, but Firebase auth needs email.
+            // Assuming user enters email in the etUsername field for password reset.
+            val email = binding.etUsername.text.toString().trim() // Changed from etEmail
+            if (email.isNotEmpty()) {
+                auth.sendPasswordResetEmail(email)
+                    .addOnCompleteListener { task ->
+                        if (task.isSuccessful) {
+                            Toast.makeText(this, "Password reset email sent to $email", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(this, "Failed to send reset email: ${task.exception?.message ?: "Unknown error"}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+            } else {
+                Toast.makeText(this, "Please enter your email address to reset password.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 }
